@@ -1,0 +1,1 @@
+Repository for yandex.practicum training tasks
