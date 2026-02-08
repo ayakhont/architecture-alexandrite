@@ -1,0 +1,38 @@
+@startuml
+actor Operator as Op
+participant "MES Frontend" as FE
+participant "MES API" as API
+participant "Redis Cache" as Cache
+participant "MES DB" as DB
+participant "RabbitMQ" as MQ
+
+== Чтение списка заказов (Cache-Aside) ==
+Op -> FE: Открыть список заказов (status=MANUFACTURING_STARTED)
+FE -> API: GET /orders?status=MANUFACTURING_STARTED&page=1
+API -> Cache: GET mes:orders:list:MANUFACTURING_STARTED:1:filters_hash
+alt Cache HIT
+  Cache --> API: list<orders>
+  API --> FE: 200 OK + list<orders>
+else Cache MISS
+  Cache --> API: null
+  API -> DB: SELECT orders WHERE status=... LIMIT/OFFSET
+  DB --> API: rows
+  API -> Cache: SET key=list TTL=60s
+  API --> FE: 200 OK + list<orders>
+end
+
+== Изменение статуса заказа (инвалидация кеша) ==
+Op -> FE: Сменить статус заказа (order_id)
+FE -> API: POST /orders/{id}/status
+API -> DB: UPDATE orders SET status=...
+DB --> API: OK
+API -> MQ: publish OrderStatusChanged(order_id, from, to)
+API -> Cache: DEL mes:orders:card:{order_id}
+API -> Cache: DEL mes:orders:list:* (или по затронутым статусам)
+API --> FE: 200 OK
+
+== Обновление read-моделей (опционально) ==
+MQ -> API: consume OrderStatusChanged
+API -> Cache: (опционально) warm-up горячих ключей
+
+@enduml
